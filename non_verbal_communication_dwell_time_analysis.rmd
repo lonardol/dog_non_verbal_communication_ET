@@ -1,0 +1,494 @@
+---
+title: Woodward (Kano) paradigm: Dwell time analysis
+author: Christoph Voelter
+date: 05/07/2021
+output: html_document
+---
+notes: 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls())
+library(tidyverse)
+library(summarytools)
+library(exactRankTests)
+library(ggpubr)
+library(glmmTMB)
+library(car)
+library(lme4)
+source("./functions/diagnostic_fcns.r")
+source("./functions/glmm_stability.r")
+source("./functions/boot_glmm.r")
+source("./functions/boot_glmm2.r")
+source("./functions/glmmTMB_stability.r")
+source("./functions/boot_glmmTMB.r")
+source("./functions/extract_ranef_gmmTMB.r")
+#setwd("C:/Users/lonardol/Documents/GitHub/dog_woodward_2022/experiment_1")
+#load("./workspaces/ET_dog_woodward_kano_paradigm.RData")
+#load("./experiment_1/workspaces/ET_dog_woodward_kano_paradigm.RData")
+
+```
+
+## Larger IAs
+### End IP
+
+```{r}
+end.ip.orig.data <- read_delim("experiment_1/data/dog_woodward_paradigm_IA_report_largeAOI_video_IP_end.txt", na=".", delim="\t")
+
+levels(as.factor(end.ip.orig.data$IA_LABEL))
+
+demo.data <- read_csv("experiment_1/data/Woodward_Kano_ counterbalancing.csv")%>%
+  mutate(EDF1=fct_recode(as.factor(EDF1), "Georgia_1"="Georgia1"))%>%
+  separate(EDF1, c("subject", "num"), sep="_")
+
+
+
+end.ip.data <- end.ip.orig.data %>%
+  select(Session_Name_, IP_LABEL, IA_LABEL,IA_ID, Trial_Index_, condition,  target, target_location, session, trial_within_block, video_file,  video_latency, DATA_FILE,  IA_AREA, IA_AVERAGE_FIX_PUPIL_SIZE,  IA_DWELL_TIME, "IA_DWELL_TIME_%", IA_FIXATION_COUNT, IA_MAX_FIX_PUPIL_SIZE, INTEREST_AREA_FIXATION_SEQUENCE, TRIAL_DWELL_TIME, TRIAL_FIXATION_COUNT, TRIAL_IA_COUNT, TRIAL_TOTAL_VISITED_IA_COUNT, IA_FIRST_FIXATION_TIME )%>%
+  mutate(Session_Name_=fct_recode(Session_Name_, Georgia_1="Georgia1",Georgia_2="Georgia2", Georgia_3="Georgia3",Georgia_4="Georgia4" ))%>%
+  separate(Session_Name_, c("subject", "session.num"), sep = "_") %>%
+  mutate(condition_trial=paste(condition, "_", trial_within_block))%>%
+  full_join(demo.data)
+  
+
+
+end.ip.data.wider <- end.ip.data %>%
+  select(
+    subject,
+    session.num,
+    condition_trial,
+    IP_LABEL,
+    IA_LABEL,
+    condition,
+    condition_first,
+    target,
+    target_location,
+    session,
+    trial_within_block,
+    video_file,
+    video_latency,
+    DATA_FILE,
+    IA_DWELL_TIME
+  ) %>%
+  pivot_wider(names_from = IA_LABEL, values_from = IA_DWELL_TIME) %>%
+  mutate(
+    object_congruent_dwell_time = as.numeric(ifelse(
+      target_location == "up",
+      lower_IA_large,
+      ifelse(target_location == "down", upper_IA_large, "")
+    )),
+    object_IA_dwell_time = lower_IA_large + upper_IA_large,
+    object_incongruent_dwell_time = as.numeric(ifelse(
+      target_location == "up",
+      upper_IA_large,
+      ifelse(target_location == "down", lower_IA_large, "")
+    ))
+  ) %>%
+  select(-lower_IA_large,-upper_IA_large) %>%
+  pivot_longer(
+    cols = c(object_congruent_dwell_time, object_incongruent_dwell_time),
+    names_to = "object_congruent",
+    values_to = "dwell_time"
+  ) %>%
+  mutate(
+    proportion.object.congruent.dwell.time = dwell_time / object_IA_dwell_time,
+    proportion.object.congruent.dwell.time_noNA = as.numeric(ifelse(
+      is.na(proportion.object.congruent.dwell.time),
+      0,
+      proportion.object.congruent.dwell.time
+    )
+    ))
+
+
+end.ip.first.look <- end.ip.data %>%
+  select(
+    subject,
+    session.num,
+    condition_trial,
+    IP_LABEL,
+    IA_LABEL,
+    condition,
+    condition_first,
+    target,
+    target_location,
+    session,
+    trial_within_block,
+    video_file,
+    video_latency,
+    DATA_FILE,
+    IA_FIRST_FIXATION_TIME
+  ) %>%
+  pivot_wider(names_from = IA_LABEL, values_from = IA_FIRST_FIXATION_TIME) %>%
+  mutate(
+    upper_IA_large = as.numeric(upper_IA_large),
+    lower_IA_large = as.numeric(lower_IA_large)
+  ) %>%
+  mutate(first_look = ifelse((
+    upper_IA_large < lower_IA_large |
+      (!is.na(upper_IA_large) & is.na(lower_IA_large))
+  ), "upper", "")) %>%
+  mutate(first_look2 = ifelse((
+    lower_IA_large < upper_IA_large |
+      (!is.na(lower_IA_large) & is.na(upper_IA_large))
+  ), "lower", "")) %>%
+  mutate(first_look3 = ifelse(
+    !is.na(first_look),
+    first_look,
+    ifelse(!is.na(first_look2), first_look2, NA)
+  )) %>%
+  mutate(object_congruent_first_look = as.numeric(ifelse((target_location ==
+                                                            "up" &
+                                                            first_look3 == "lower"),
+                                                         1,
+                                                         ifelse((target_location == "down" &
+                                                                   first_look3 == "upper"),
+                                                                1,
+                                                                ifelse((target_location == "up" &
+                                                                          first_look3 == "upper"),
+                                                                       0,
+                                                                       ifelse((
+                                                                         target_location == "down" & first_look3 == "lower"
+                                                                       ), 0, NA)
+                                                                )
+                                                         )
+  )),
+  object_congruent_first_look_noNA = as.numeric(ifelse(is.na(first_look3),0, object_congruent_first_look )))
+
+#manually replacing Nas that were not automatically scored correctly
+end.ip.first.look[c(67,97),"object_congruent_first_look_noNA"] <-0
+
+#checks:
+view(dfSummary(end.ip.data))
+
+table(end.ip.data$trial_within_block, end.ip.data$subject)
+table(end.ip.data$condition, end.ip.data$subject)
+table(end.ip.data$session.num, end.ip.data$subject)
+table(end.ip.data$condition, end.ip.data$TRIAL_TOTAL_VISITED_IA_COUNT)
+
+```
+
+
+* Absolute dwell time
+```{r}
+test.IP.end.data <- end.ip.data %>%
+  group_by(subject, condition, target_location, IA_LABEL)%>%
+  summarise(mean_dwell=mean(IA_DWELL_TIME))
+
+
+
+ggplot(data = test.IP.end.data%>%filter(condition=="claw"), aes(x=IA_LABEL, y=mean_dwell))+
+  geom_boxplot(alpha=0.5)+#, outlier.colour = "white")+
+  #geom_point(aes(x=first_target_loc, y=IA_DWELL_TIME, group=IA_LABEL),position_dodge(), alpha=0.5)+
+  facet_grid(~target_location)+
+  ylab("Dwell time")+xlab("Condition")+
+  #ylim(0,3000)+
+  theme_bw()+
+  stat_compare_means(paired = TRUE, method = "t.test", label.y = 1500 )
+
+
+ggplot(data = test.IP.end.data%>%filter(condition=="hand"), aes(x=IA_LABEL, y=mean_dwell))+
+  geom_boxplot(alpha=0.5)+#, outlier.colour = "white")+
+  #geom_point(aes(x=first_target_loc, y=IA_DWELL_TIME, group=IA_LABEL),position_dodge(), alpha=0.5)+
+  facet_grid(~target_location)+
+  ylab("Dwell time")+xlab("Condition")+
+  #ylim(0,3000)+
+  theme_bw()+
+  stat_compare_means(paired = TRUE, method = "t.test", label.y = 1500 )
+
+```
+* Proportion dwell time
+```{r}
+#descriptive statistics
+test.IP.end.data.object.congruent.descr <- end.ip.data.wider %>%
+  group_by(condition, object_congruent)%>%
+  summarise(mean_dwell=mean(dwell_time),
+            mean_proportion_dwell=mean(proportion.object.congruent.dwell.time, na.rm = TRUE),
+            sd_prop_dwell= sd(proportion.object.congruent.dwell.time, na.rm = TRUE),
+            se_proportion_dwell=sd(proportion.object.congruent.dwell.time, na.rm = TRUE)/sqrt(length(proportion.object.congruent.dwell.time)))
+
+test.IP.end.data.object.congruent <- end.ip.data.wider %>%
+  group_by(subject, condition, object_congruent)%>%
+  summarise(mean_dwell=mean(dwell_time), mean_proportion_dwell=mean(proportion.object.congruent.dwell.time, na.rm = TRUE))
+
+
+
+ggplot(data = test.IP.end.data.object.congruent, aes(x=object_congruent, y=mean_dwell))+
+  geom_boxplot(alpha=0.5)+#, outlier.colour = "white")+
+  geom_point(alpha=0.3)+
+  geom_line(aes(group=subject), alpha=0.3)+
+  facet_wrap(~condition)+
+  ylab("Dwell time")+xlab("Object congruency")+
+  #ylim(0,3000)+
+  theme_bw()+
+  stat_compare_means(paired = TRUE, method = "t.test", label.y = 1500 )
+
+
+ggplot(data = test.IP.end.data.object.congruent, aes(x=object_congruent, y=mean_proportion_dwell))+
+  geom_boxplot(alpha=0.5)+#, outlier.colour = "white")+
+  geom_point(alpha=0.3)+
+  geom_line(aes(group=subject), alpha=0.3)+
+  facet_wrap(~condition)+
+  ylab("Proportion dwell time")+xlab("Object congruency")+
+  #ylim(0,3000)+
+  theme_bw()+
+  stat_compare_means(paired = TRUE, method = "t.test", label.y = 0.8 )
+```
+
+* T-test comparing dwell times between object congruent and incongruent IAs
+```{r}
+test.IP.end.data.object.congruent.hand<-test.IP.end.data.object.congruent%>%
+  filter(condition=="hand")
+
+t.test(test.IP.end.data.object.congruent.hand$mean_dwell[test.IP.end.data.object.congruent.hand$object_congruent=="object_congruent_dwell_time"], test.IP.end.data.object.congruent.hand$mean_dwell[test.IP.end.data.object.congruent.hand$object_congruent=="object_incongruent_dwell_time"], paired=TRUE)
+```
+
+
+#### Beta GLMM
+
+```{r}
+
+model.data.end.IP.largerIA<-end.ip.data.wider%>%
+  filter(object_congruent=="object_congruent_dwell_time")%>%
+  mutate(z.trial=scale(trial_within_block, center = TRUE, scale=TRUE), # trial within condition
+         condition.c=scale(as.numeric(as.factor(condition)), center = TRUE, scale=FALSE))
+
+summary(model.data.end.IP.largerIA)
+```
+
+```{r}
+model.data.end.IP.largerIA$prop.dwell.scaled <-
+  (
+    model.data.end.IP.largerIA$proportion.object.congruent.dwell.time_noNA *
+      (
+        length(
+          model.data.end.IP.largerIA$proportion.object.congruent.dwell.time_noNA
+        ) - 1
+      ) + 0.5
+  ) / length(model.data.end.IP.largerIA$proportion.object.congruent.dwell.time_noNA)#transform DV to exclude 0 and 1s
+
+m1.endIP.largeIA<-glmmTMB(prop.dwell.scaled ~ condition + z.trial + condition_first +  target_location+(1+condition.c+z.trial||subject), family=beta_family, data=model.data.end.IP.largerIA,  control=glmmTMBControl(optCtrl=list(iter.max=100000000, eval.max=100000000)))
+
+summary(m1.endIP.largeIA)
+round(summary(m1.endIP.largeIA)$coefficients$cond,2)
+```
+
+
+```{r}
+drop1_m1<-drop1(m1.endIP.largeIA, test="Chisq")
+round(drop1_m1,3)
+```
+
+```{r}
+
+
+m2.endIP.largeIA<-glmmTMB(prop.dwell.scaled ~ condition*target_location+z.trial +(1+condition.c+z.trial||subject), family=beta_family, data=model.data.end.IP.largerIA,  control=glmmTMBControl(optCtrl=list(iter.max=100000000, eval.max=100000000)))
+
+```
+
+```{r}
+drop1_m2<-drop1(m2.endIP.largeIA, test="Chisq")
+drop1_m2
+```
+##### assumptions
+```{r}
+#overdispersion
+overdisp.test(m1.endIP.largeIA)
+
+#distribution of the BLUPs
+ranef.diagn.plot(m1.endIP.largeIA) 
+
+#collinearity
+xx=lme4::lmer(prop.dwell.scaled ~ condition + z.trial + condition_first +  target_location +
+(1+condition.c+z.trial||subject),
+data=model.data.end.IP.largerIA)
+round(vif(xx), 3)
+```
+
+##### model stability beta model prop. dwell time
+```{r}
+m1.endIP.largeIA.stab=glmmTMB.stab(model.res=m1.endIP.largeIA, para=F, data=model.data.end.IP.largerIA)
+
+#stability table
+round(m1.endIP.largeIA.stab$summary[1:5, -1],2)
+#stability plot
+m.stab.plot(round(m1.endIP.largeIA.stab$summary[1:5, -1], 3))
+```
+
+##### confidence intervals beta model prop. dwell time
+```{r}
+boot.m1.endIP.largeIA=boot.glmmtmb(m=m1.endIP.largeIA, data=model.data.end.IP.largerIA,
+discard.non.conv=F, nboots=1000, para=T, resol=100,
+level=0.95, n.cores="all-1")
+
+round(boot.m1.endIP.largeIA$ci.estimates$fe[1:5,],2)
+```
+
+
+The results of the dwell time analysis of the end IP show no difference between the hand or claw condition with respect to the looking times to the grasped object. Dogs showed a preference to look at the old identity object when this was in the upper location (evidenced by a significant target location effect).
+
+### Intercept only model for proportion congruent object dwell time
+```{r}
+model.data.end.IP.largerIA$prop.dwell.scaled2 <-
+  (
+    model.data.end.IP.largerIA$proportion.object.congruent.dwell.time *
+      (
+        length(
+          model.data.end.IP.largerIA$proportion.object.congruent.dwell.time
+        ) - 1
+      ) + 0.5
+  ) / length(model.data.end.IP.largerIA$proportion.object.congruent.dwell.time)#transform DV to exclude 0 and 1s
+
+m1.endIP.largeIA_interceptonly<-glmmTMB(prop.dwell.scaled2 ~  z.trial+(1+z.trial||subject), family=beta_family, data=model.data.end.IP.largerIA,  control=glmmTMBControl(optCtrl=list(iter.max=100000000, eval.max=100000000)))
+
+round(summary(m1.endIP.largeIA_interceptonly)$coefficients$cond,3)
+```
+
+### First fixation analysis (binary)
+```{r}
+model.data.end.IP.first.looks<-end.ip.first.look%>%
+  mutate(z.trial=scale(trial_within_block, center = TRUE, scale=TRUE),
+         condition.c=scale(as.numeric(as.factor(condition)), center = TRUE, scale=FALSE))
+
+summary(model.data.end.IP.first.looks)
+
+
+m1.endIP.first_look<-glmer(object_congruent_first_look_noNA ~ condition + z.trial + condition_first+ target_location+(1+condition.c+z.trial|subject), family=binomial, data=model.data.end.IP.first.looks, control=glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000000)))
+
+round(summary(m1.endIP.first_look)$coefficients,2)
+```
+
+
+```{r}
+drop1_m1.first.look<-drop1(m1.endIP.first_look, test="Chisq")
+round(drop1_m1.first.look,3)
+```
+####assumptions and stability
+```{r}
+#BLUPs
+ranef.diagn.plot(m1.endIP.first_look)
+
+#Stability
+stab.m1.endIP.first_look=glmm.model.stab(model.res=m1.endIP.first_look,
+contr=glmerControl(optimizer="bobyqa",
+optCtrl=list(maxfun=10000)))
+
+round(stab.m1.endIP.first_look$summary[1:5, -1],2)
+m.stab.plot(stab.m1.endIP.first_look$summary[, -1])
+```
+####CIs binomial model first fixation
+```{r}
+boot.m1.endIP.first_look=boot.glmm.pred(model.res=m1.endIP.first_look,
+nboots=1000, para=T, resol=1000, level=0.95,
+use=NULL, n.cores="all-1")
+
+first.fix.bin.cis<-round(boot.m1.endIP.first_look$ci.estimates, 2)
+first.fix.bin.cis
+```
+
+
+### Intercept only model for first look
+```{r}
+m1.endIP.first_look_interceptonly<-glmer(object_congruent_first_look ~ 1+z.trial+(1+z.trial|subject), family=binomial, data=model.data.end.IP.first.looks, control=glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000000)))
+
+round(summary(m1.endIP.first_look_interceptonly)$coefficients,3)
+```
+
+###First fixation to incongruent object (binary model)
+```{r}
+end.ip.first.look.incongr <- end.ip.data %>%
+  select(
+    subject,
+    session.num,
+    condition_trial,
+    IP_LABEL,
+    IA_LABEL,
+    condition,
+    condition_first,
+    target,
+    target_location,
+    session,
+    trial_within_block,
+    video_file,
+    video_latency,
+    DATA_FILE,
+    IA_FIRST_FIXATION_TIME
+  ) %>%
+  pivot_wider(names_from = IA_LABEL, values_from = IA_FIRST_FIXATION_TIME) %>%
+  mutate(
+    upper_IA_large = as.numeric(upper_IA_large),
+    lower_IA_large = as.numeric(lower_IA_large)
+  ) %>% 
+ mutate(first_look = ifelse((
+    upper_IA_large < lower_IA_large |
+      (!is.na(upper_IA_large) & is.na(lower_IA_large))
+  ), "upper", "NA")) %>%
+  mutate(first_look2 = ifelse((
+    lower_IA_large < upper_IA_large |
+      (!is.na(lower_IA_large) & is.na(upper_IA_large))
+  ), "lower", "NA")) %>% 
+
+  mutate(first_look3=coalesce(first_look, first_look2)) %>% 
+  mutate(object_incongruent_first_look = as.numeric(ifelse((target_location ==
+                                                            "up" &
+                                                            first_look3 == "lower"),
+                                                         0,
+                                                         ifelse((target_location == "down" &
+                                                                   first_look3 == "upper"),
+                                                                0,
+                                                                ifelse((target_location == "up" &
+                                                                          first_look3 == "upper"),
+                                                                       1,
+                                                                       ifelse((
+                                                                         target_location == "down" & first_look3 == "lower"
+                                                                       ), 1, NA)
+                                                                )
+                                                         )
+  )),
+  object_incongruent_first_look_noNA = as.numeric(ifelse(is.na(first_look3),0, object_incongruent_first_look )))
+
+summary(end.ip.first.look.incongr$object_incongruent_first_look_noNA)
+
+#manually replacing Nas that were not automatically scored correctly
+end.ip.first.look.incongr[c(67,97),"object_incongruent_first_look_noNA"] <-0
+ 
+summary(end.ip.first.look.incongr$object_incongruent_first_look_noNA)
+```
+
+```{r}
+model.data.end.IP.first.look.incongr<-end.ip.first.look.incongr%>%
+  mutate(z.trial=scale(trial_within_block, center = TRUE, scale=TRUE),
+         condition.c=scale(as.numeric(as.factor(condition)), center = TRUE, scale=FALSE))
+
+summary(model.data.end.IP.first.look.incongr)
+
+
+m1.endIP.first_look.incongr<-glmer(object_incongruent_first_look_noNA ~ condition + z.trial + condition_first+ target_location+(1+condition.c+z.trial|subject), family=binomial, data=model.data.end.IP.first.look.incongr, control=glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000000)))
+
+round(summary(m1.endIP.first_look.incongr)$coefficients,2)
+```
+
+```{r}
+drop1_m1.first.look.incongr<-drop1(m1.endIP.first_look.incongr, test="Chisq")
+round(drop1_m1.first.look.incongr,3)
+```
+####assumptions and stability first fix incongr obj
+```{r}
+#BLUPs
+ranef.diagn.plot(m1.endIP.first_look.incongr)
+
+#Stability
+stab.m1.endIP.first_look.incongr=glmm.model.stab(model.res=m1.endIP.first_look.incongr,
+contr=glmerControl(optimizer="bobyqa",
+optCtrl=list(maxfun=10000)))
+
+round(stab.m1.endIP.first_look.incongr$summary[1:5, -1],2)
+m.stab.plot(stab.m1.endIP.first_look.incongr$summary[, -1])
+```
+####CIs binomial model first fixation incongr obj
+```{r}
+boot.m1.endIP.first_look.incongr=boot.glmm.pred(model.res=m1.endIP.first_look.incongr,
+nboots=1000, para=T, resol=1000, level=0.95,
+use=NULL, n.cores="all-1")
+
+first.fix.incongr.bin.cis<-round(boot.m1.endIP.first_look.incongr$ci.estimates, 2)
+first.fix.incongr.bin.cis
+```
