@@ -1,7 +1,7 @@
 ---
-title: Woodward (Kano) paradigm: Dwell time analysis
-author: Christoph Voelter
-date: 05/07/2021
+title: Non verbal communication dogs - Dwell time analysis
+author: Lucrezia Lonardo
+date: 18/11/2024
 output: html_document
 ---
 notes: 
@@ -9,49 +9,99 @@ notes:
 knitr::opts_chunk$set(echo = TRUE)
 rm(list=ls())
 library(tidyverse)
-library(summarytools)
-library(exactRankTests)
-library(ggpubr)
-library(glmmTMB)
-library(car)
-library(lme4)
-source("./functions/diagnostic_fcns.r")
-source("./functions/glmm_stability.r")
-source("./functions/boot_glmm.r")
-source("./functions/boot_glmm2.r")
-source("./functions/glmmTMB_stability.r")
-source("./functions/boot_glmmTMB.r")
-source("./functions/extract_ranef_gmmTMB.r")
-#setwd("C:/Users/lonardol/Documents/GitHub/dog_woodward_2022/experiment_1")
-#load("./workspaces/ET_dog_woodward_kano_paradigm.RData")
-#load("./experiment_1/workspaces/ET_dog_woodward_kano_paradigm.RData")
-
+library(dplyr)
+#library(summarytools)
+#library(exactRankTests)
+#library(ggpubr)
+#library(glmmTMB)
+#library(car)
+#library(lme4)
+# source("./functions/diagnostic_fcns.r")
+# source("./functions/glmm_stability.r")
+# source("./functions/boot_glmm.r")
+# source("./functions/boot_glmm2.r")
+# source("./functions/glmmTMB_stability.r")
+# source("./functions/boot_glmmTMB.r")
+# source("./functions/extract_ranef_gmmTMB.r")
 ```
 
-## Larger IAs
-### End IP
+### Import data - video IP
 
 ```{r}
-end.ip.orig.data <- read_delim("experiment_1/data/dog_woodward_paradigm_IA_report_largeAOI_video_IP_end.txt", na=".", delim="\t")
+#IA report
+video.ip.orig.data <- read_delim("data/IA_report.txt", na=".", delim="\t")
+levels(as.factor(video.ip.orig.data$IA_LABEL))
 
-levels(as.factor(end.ip.orig.data$IA_LABEL))
+#demographic data
+demo.data <- read_csv("data/Non_verbal_communication_counterbalancing.csv")%>%
+  mutate(EDF3=fct_recode(as.factor(EDF3), "Georgia_3"="Georgia3", "Mathilda_3"="Mathild3"))%>%
+  separate(EDF3, c("subject", "num"), sep="_") %>% 
+  select(-num) %>% 
+  filter(!is.na(subject))
 
-demo.data <- read_csv("experiment_1/data/Woodward_Kano_ counterbalancing.csv")%>%
-  mutate(EDF1=fct_recode(as.factor(EDF1), "Georgia_1"="Georgia1"))%>%
-  separate(EDF1, c("subject", "num"), sep="_")
-
-
-
-end.ip.data <- end.ip.orig.data %>%
-  select(Session_Name_, IP_LABEL, IA_LABEL,IA_ID, Trial_Index_, condition,  target, target_location, session, trial_within_block, video_file,  video_latency, DATA_FILE,  IA_AREA, IA_AVERAGE_FIX_PUPIL_SIZE,  IA_DWELL_TIME, "IA_DWELL_TIME_%", IA_FIXATION_COUNT, IA_MAX_FIX_PUPIL_SIZE, INTEREST_AREA_FIXATION_SEQUENCE, TRIAL_DWELL_TIME, TRIAL_FIXATION_COUNT, TRIAL_IA_COUNT, TRIAL_TOTAL_VISITED_IA_COUNT, IA_FIRST_FIXATION_TIME )%>%
-  mutate(Session_Name_=fct_recode(Session_Name_, Georgia_1="Georgia1",Georgia_2="Georgia2", Georgia_3="Georgia3",Georgia_4="Georgia4" ))%>%
-  separate(Session_Name_, c("subject", "session.num"), sep = "_") %>%
-  mutate(condition_trial=paste(condition, "_", trial_within_block))%>%
+#full data
+video.ip.data <- video.ip.orig.data %>%
+  select(RECORDING_SESSION_LABEL, IP_LABEL, IA_LABEL,IA_ID, Trial_Index_, condition, trial_type, session_number, trial_number, video_file, DATA_FILE,  IA_AREA, IA_AVERAGE_FIX_PUPIL_SIZE,  IA_DWELL_TIME, "IA_DWELL_TIME_%", IA_FIXATION_COUNT, IA_MAX_FIX_PUPIL_SIZE, INTEREST_AREA_FIXATION_SEQUENCE, TRIAL_DWELL_TIME, TRIAL_FIXATION_COUNT, TRIAL_IA_COUNT, TRIAL_TOTAL_VISITED_IA_COUNT, IA_FIRST_FIXATION_TIME )%>%
+  mutate(RECORDING_SESSION_LABEL=fct_recode(RECORDING_SESSION_LABEL, Georgia_1="Georgia1",Georgia_2="Georgia2", Georgia_3="Georgia3",Georgia_4="Georgia4", Mathilda_1="Mathild1", Mathilda_2="Mathild2", Mathilda_3="Mathild3", Mathilda_4="Mathild4" ))%>%
+  separate(RECORDING_SESSION_LABEL, c("subject", "session.num"), sep = "_") %>% 
   full_join(demo.data)
+```
+
+###Descriptive stats
+
+```{r}
+#descriptive statistics
+dwell.descr <-video.ip.data %>%
+  filter(IA_LABEL!="FIXATION_TRIGGER") %>% 
+  group_by(subject, trial_number, condition, trial_type, IA_LABEL, TRIAL_DWELL_TIME) %>% 
+  summarise(ia_dwell_time=IA_DWELL_TIME) %>% 
+   mutate(agent_type = ifelse(grepl("inviting|pointing", IA_LABEL), 
+                             "communicating", 
+                             "reacting")) %>% 
+  mutate(proportion.dwell.time.agents=ia_dwell_time/TRIAL_DWELL_TIME)
   
 
+dwell.descr.aggr<-dwell.descr %>% 
+  group_by(condition) %>% 
+  summarise(mean_dwell_time_to_agents=mean(ia_dwell_time),
+            mean_prop_dwell_agents=mean(proportion.dwell.time.agents, na.rm = TRUE),
+            sd_dwell= sd(ia_dwell_time, na.rm = TRUE),
+            se_dwell=sd(ia_dwell_time, na.rm = TRUE)/sqrt(length(ia_dwell_time)))
+```
 
-end.ip.data.wider <- end.ip.data %>%
+### Bring data into right format for dwell time analysis
+```{r}
+dwell.time.data<-video.ip.data %>% 
+  filter(IA_LABEL!="FIXATION_TRIGGER") %>% 
+  group_by(subject, trial_number, condition, trial_type) %>% 
+  summarise(dwell_time_to_agents=sum(IA_DWELL_TIME))
+```
+###Plot dwell times
+
+```{r}
+
+
+
+ggplot(data = test.IP.end.data%>%filter(condition=="claw"), aes(x=IA_LABEL, y=mean_dwell))+
+  geom_boxplot(alpha=0.5)+#, outlier.colour = "white")+
+  #geom_point(aes(x=first_target_loc, y=IA_DWELL_TIME, group=IA_LABEL),position_dodge(), alpha=0.5)+
+  facet_grid(~target_location)+
+  ylab("Dwell time")+xlab("Condition")+
+  #ylim(0,3000)+
+  theme_bw()+
+  stat_compare_means(paired = TRUE, method = "t.test", label.y = 1500 )
+
+
+
+
+
+
+
+
+
+
+#LL from here old Woodward script: 
+end.ip.data.wider <- video.ip.data %>%
   select(
     subject,
     session.num,
@@ -99,7 +149,7 @@ end.ip.data.wider <- end.ip.data %>%
     ))
 
 
-end.ip.first.look <- end.ip.data %>%
+end.ip.first.look <- video.ip.data %>%
   select(
     subject,
     session.num,
@@ -157,12 +207,12 @@ end.ip.first.look <- end.ip.data %>%
 end.ip.first.look[c(67,97),"object_congruent_first_look_noNA"] <-0
 
 #checks:
-view(dfSummary(end.ip.data))
+view(dfSummary(video.ip.data))
 
-table(end.ip.data$trial_within_block, end.ip.data$subject)
-table(end.ip.data$condition, end.ip.data$subject)
-table(end.ip.data$session.num, end.ip.data$subject)
-table(end.ip.data$condition, end.ip.data$TRIAL_TOTAL_VISITED_IA_COUNT)
+table(video.ip.data$trial_within_block, video.ip.data$subject)
+table(video.ip.data$condition, video.ip.data$subject)
+table(video.ip.data$session.num, video.ip.data$subject)
+table(video.ip.data$condition, video.ip.data$TRIAL_TOTAL_VISITED_IA_COUNT)
 
 ```
 
@@ -173,16 +223,6 @@ test.IP.end.data <- end.ip.data %>%
   group_by(subject, condition, target_location, IA_LABEL)%>%
   summarise(mean_dwell=mean(IA_DWELL_TIME))
 
-
-
-ggplot(data = test.IP.end.data%>%filter(condition=="claw"), aes(x=IA_LABEL, y=mean_dwell))+
-  geom_boxplot(alpha=0.5)+#, outlier.colour = "white")+
-  #geom_point(aes(x=first_target_loc, y=IA_DWELL_TIME, group=IA_LABEL),position_dodge(), alpha=0.5)+
-  facet_grid(~target_location)+
-  ylab("Dwell time")+xlab("Condition")+
-  #ylim(0,3000)+
-  theme_bw()+
-  stat_compare_means(paired = TRUE, method = "t.test", label.y = 1500 )
 
 
 ggplot(data = test.IP.end.data%>%filter(condition=="hand"), aes(x=IA_LABEL, y=mean_dwell))+
@@ -197,13 +237,7 @@ ggplot(data = test.IP.end.data%>%filter(condition=="hand"), aes(x=IA_LABEL, y=me
 ```
 * Proportion dwell time
 ```{r}
-#descriptive statistics
-test.IP.end.data.object.congruent.descr <- end.ip.data.wider %>%
-  group_by(condition, object_congruent)%>%
-  summarise(mean_dwell=mean(dwell_time),
-            mean_proportion_dwell=mean(proportion.object.congruent.dwell.time, na.rm = TRUE),
-            sd_prop_dwell= sd(proportion.object.congruent.dwell.time, na.rm = TRUE),
-            se_proportion_dwell=sd(proportion.object.congruent.dwell.time, na.rm = TRUE)/sqrt(length(proportion.object.congruent.dwell.time)))
+
 
 test.IP.end.data.object.congruent <- end.ip.data.wider %>%
   group_by(subject, condition, object_congruent)%>%
