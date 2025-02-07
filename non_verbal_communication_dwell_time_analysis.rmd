@@ -12,6 +12,7 @@ library(tidyverse)
 library(dplyr)
 library(ggplot2)
 library(glmmTMB)
+library(ggpubr)
 #library(ggpubr)
 #library(grid)
 #library(summarytools)
@@ -311,9 +312,44 @@ dwell.descr.part.react<-dwell.descr.react %>%
 ```
 ###Checking the data
 ```{r}
-table(dwell.descr.part.react$condition, dwell.descr.part$subject) #Mailo misses 1 observation in CA (he will be tested again)
+table(dwell.descr.part.react$condition, dwell.descr.part.react$subject) #Mailo misses 1 observation in CA (he will be tested again)
 # dwell.descr.part<-dwell.descr.part %>% 
 #   filter(subject!="Mailo")
+```
+###Plot dwell times as a function of trial type (based on aggregated data)
+
+```{r}
+#Version 1 (2 boxplots, one for congruent, one for incongruent conditions)
+dwell.descr.aggr.react$trial_type<-fct_recode(dwell.descr.aggr.react$trial_type, "Congruent"="cong", "Incongruent"="incong")
+
+ggplot(data = dwell.descr.aggr.react, aes(x = trial_type, y = mean_dwell_time_to_agents)) +
+  geom_boxplot(alpha = 0.5) +  # Boxplot with transparency
+  #geom_jitter(aes(fill = condition),  # Jitter points and color by condition
+              # position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75), 
+              # alpha = 0.5, shape = 21) +  # Add transparency and shape
+  ylab("Mean dwell time to agents") +
+  xlab("Trial type") +
+  ylim(3850, 4500) +  
+  theme_bw()+
+  stat_compare_means(paired = TRUE, method = "t.test", label.x= 1.4, label.y = 4500 )
+
+t.test(dwell.descr.react$mean_dwell_time_to_agents[dwell.descr.react$condition=="CA"], dwell.descr.react$mean_dwell_time_to_agents[dwell.descr.react$condition=="CG"], paired=TRUE)
+#LL:It seems there is no difference in the dwell times to the 2 agents combined. Next, do the same for the acting agent alone (or the 2 agents separately)
+```
+### Plot showing also condition, based on trial by trial data
+```{r}
+ggplot(data = dwell.descr.react, 
+       aes(x = interaction(agent_type, trial_type, sep = "\n"), 
+           y = ia_dwell_time)) +
+  geom_boxplot(alpha = 0.5) +  # Boxplot with transparency
+  # geom_jitter(aes(fill = condition),  # Uncomment to add jittered points colored by condition
+  #             position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75), 
+  #             alpha = 0.5, shape = 21) +  # Add transparency and shape
+  ylab("Mean dwell time to agents") +
+  xlab("Agent Type\nTrial Type") +  # Label for clarity
+  #ylim(3850, 4500) +  
+  theme_bw()
+
 ```
 
 ###Preparing the data for analysis
