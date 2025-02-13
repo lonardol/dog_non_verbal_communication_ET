@@ -64,7 +64,26 @@ dwell.descr <-video.ip.data %>%
                              "communicating", 
                              "reacting")) %>% 
   mutate(proportion.dwell.time.agents=ia_dwell_time/TRIAL_DWELL_TIME)
-  
+
+
+dwell.descr_ind <-video.ip.data %>%
+  filter(IA_LABEL!="FIXATION_TRIGGER") %>% 
+  group_by(subject) %>% 
+  summarise(ia_dwell_time_mean=mean(IA_DWELL_TIME),
+            ia_dwell_time_sd=sd(IA_DWELL_TIME))
+
+dwell.descr<-dwell.descr%>%
+  full_join(dwell.descr_ind)%>%
+  mutate(ia_dwell_time_z = (ia_dwell_time - ia_dwell_time_mean)/ia_dwell_time_sd)
+
+
+ggplot(dwell.descr, aes(x =trial_type, y = ia_dwell_time_z))+
+  geom_boxplot()+
+  facet_grid(~agent_type)
+```
+
+
+```{r}
 xx=table(dwell.descr$condition, dwell.descr$subject)
 ncol(xx) #39 dogs were tested
 xx #each dog should have 2 trials per condition (1 fam, 1 test)
@@ -288,7 +307,8 @@ reaction.ip.data <- reaction.ip.orig.data %>%
   select(RECORDING_SESSION_LABEL, IP_LABEL, IA_LABEL,IA_ID, Trial_Index_, condition, trial_type, session_number, trial_number, video_file, DATA_FILE,  IA_AREA, IA_AVERAGE_FIX_PUPIL_SIZE,  IA_DWELL_TIME, "IA_DWELL_TIME_%", IA_FIXATION_COUNT, IA_MAX_FIX_PUPIL_SIZE, INTEREST_AREA_FIXATION_SEQUENCE, TRIAL_DWELL_TIME, TRIAL_FIXATION_COUNT, TRIAL_IA_COUNT, TRIAL_TOTAL_VISITED_IA_COUNT, IA_FIRST_FIXATION_TIME )%>%
   mutate(RECORDING_SESSION_LABEL=fct_recode(RECORDING_SESSION_LABEL, Georgia_1="Georgia1",Georgia_2="Georgia2", Georgia_3="Georgia3",Georgia_4="Georgia4", Mathilda_1="Mathild1", Mathilda_2="Mathild2", Mathilda_3="Mathild3", Mathilda_4="Mathild4" ))%>%
   separate(RECORDING_SESSION_LABEL, c("subject", "session.num"), sep = "_") %>% 
-  full_join(demo.data)
+  full_join(demo.data)%>%
+  filter(!is.na(session_number))
 
 #data checks
 summary(reaction.ip.data$TRIAL_DWELL_TIME)
@@ -308,9 +328,35 @@ dwell.descr.react <-reaction.ip.data %>%
    mutate(agent_type = ifelse(grepl("inviting|pointing", IA_LABEL), 
                              "communicating", 
                              "reacting")) %>% 
-  mutate(proportion.dwell.time.agents=ia_dwell_time/TRIAL_DWELL_TIME) %>% 
+  mutate(proportion.dwell.time.agents=ia_dwell_time/TRIAL_DWELL_TIME,
+         ia_dwell_time_log = as.numeric(ifelse(ia_dwell_time>0, log(ia_dwell_time), NA))) %>% 
   ungroup()
 
+
+dwell.descr.react_ind <-reaction.ip.data %>%
+  filter(IA_LABEL!="FIXATION_TRIGGER") %>% 
+   mutate(agent_type = ifelse(grepl("inviting|pointing", IA_LABEL), 
+                             "communicating", 
+                             "reacting")) %>%
+  group_by(subject, agent_type) %>% 
+  summarise(ia_dwell_time_mean=mean(IA_DWELL_TIME),
+            ia_dwell_time_sd=sd(IA_DWELL_TIME))
+
+dwell.descr.react<-dwell.descr.react%>%
+  full_join(dwell.descr.react_ind)%>%
+  mutate(ia_dwell_time_z = (ia_dwell_time - ia_dwell_time_mean)/ia_dwell_time_sd)
+
+
+ggplot(dwell.descr.react, aes(x =trial_type, y = ia_dwell_time_log))+
+  geom_boxplot()+
+  facet_wrap(~agent_type)
+
+hist(dwell.descr.react$ia_dwell_time)
+
+```
+
+
+```{r}
 dwell.descr.aggr.react<-dwell.descr.react %>% 
   group_by(condition, trial_type) %>% 
   summarise(mean_dwell_time_to_agents=mean(ia_dwell_time),
@@ -355,7 +401,7 @@ ggplot(data = dwell.descr.aggr.react, aes(x = trial_type, y = mean_dwell_time_to
               # alpha = 0.5, shape = 21) +  # Add transparency and shape
   ylab("Mean dwell time to agents") +
   xlab("Trial type") +
-  ylim(3850, 4500) +  
+ # ylim(3850, 4500) +  
   theme_bw()+
   stat_compare_means(paired = TRUE, method = "t.test", label.x= 1.4, label.y = 4500 )
 
@@ -470,4 +516,67 @@ round(summary(m2.reactIP.react.cond)$coefficients$cond,2)#here conditionCG is (b
 
 ```
 
+
+
+### Plotting transitions
+Transitions between IAs
+```{r}
+library(dplyr)
+library(purrr)
+
+
+# Function to count transitions between 21 and 22
+count_transitions <- function(seq) {
+  # Clean and split the sequence
+  seq_clean <- gsub("\\[|\\]", "", seq)  # Remove brackets
+  seq_clean <- gsub(" ", "", seq_clean)   # Remove spaces
+  seq_split <- unlist(strsplit(seq_clean, ","))  # Split into elements
+
+  # Convert to numeric
+  seq_numeric <- suppressWarnings(as.numeric(seq_split))  # Convert to numeric
+
+  # Remove NAs and keep only 21 and 22 and 23
+  seq_numeric <- seq_numeric[!is.na(seq_numeric)]
+
+  # Initialize variables for counting transitions
+  transitions <- 0
+  previous_value <- NA
+
+  # Loop through the sequence to count transitions between 21 and 22 and 23
+  for (value in seq_numeric) {
+    if (value %in% c(21, 22, 23)) {
+      if (!is.na(previous_value) && previous_value!=20 && previous_value != value) {
+        transitions <- transitions + 1
+      }
+      previous_value <- value
+    }
+  }
+
+  return(transitions)
+}
+
+# Apply the function to count transitions for each row
+reaction.ip.data <- reaction.ip.data %>%
+  mutate(transition_count = map_int(INTEREST_AREA_FIXATION_SEQUENCE, count_transitions))
+
+reaction.ip.data%>%select(subject, Trial_Index_, IA_LABEL, INTEREST_AREA_FIXATION_SEQUENCE, transition_count)%>%
+  filter(IA_LABEL!="FIXATION_TRIGGER")
+```
+
+
+```{r}
+dwell.descr.react_transitions <-reaction.ip.data %>%
+  filter(IA_LABEL!="FIXATION_TRIGGER") %>% 
+  group_by(subject, trial_number, condition, trial_type, IA_LABEL, TRIAL_DWELL_TIME) %>% 
+  summarise(transition_count=transition_count) %>% 
+   mutate(agent_type = ifelse(grepl("inviting|pointing", IA_LABEL), 
+                             "communicating", 
+                             "reacting")) %>% 
+  ungroup()
+
+
+
+ggplot(dwell.descr.react_transitions, aes(x =trial_type, y = transition_count))+
+  geom_boxplot()
+```
 
